@@ -1,0 +1,993 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <meta name="color-scheme" content="dark"/>
+  <title>WEB SITE 公開カウントダウン（OFFLINE / OBS対応）</title>
+  <style>
+    :root{
+      --hud: rgba(255,255,255,.93);
+      --hud-dim: rgba(255,255,255,.58);
+      --panel: rgba(10,10,18,.55);
+      --panel-brd: rgba(255,255,255,.16);
+      --shadow: 0 0 18px rgba(160,220,255,.18), 0 0 70px rgba(120,190,255,.16);
+    }
+    html,body{height:100%; margin:0; overflow:hidden; background:#000;}
+    body{
+      font-family: system-ui,-apple-system,"Noto Sans JP","Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+      user-select:none;
+    }
+
+    #stage{
+      position:fixed; inset:0;
+      transform: translate3d(0,0,0);
+      will-change: transform;
+    }
+    #bg{
+      position:absolute; inset:0;
+      width:100%; height:100%;
+      display:block;
+    }
+
+    /* overlays */
+    #vignette{
+      position:absolute; inset:0;
+      pointer-events:none;
+      z-index:2;
+      background:
+        radial-gradient(1200px 620px at 50% 52%, rgba(120,190,255,.10), transparent 60%),
+        radial-gradient(900px 420px at 55% 40%, rgba(200,120,255,.08), transparent 60%),
+        radial-gradient(760px 380px at 40% 65%, rgba(120,255,220,.06), transparent 65%),
+        radial-gradient(1600px 900px at 50% 50%, transparent 55%, rgba(0,0,0,.58) 85%, rgba(0,0,0,.88) 100%);
+      mix-blend-mode: screen;
+      opacity:.92;
+      transition: opacity .2s linear;
+    }
+    #scanlines{
+      position:absolute; inset:0;
+      pointer-events:none;
+      z-index:4;
+      background:
+        repeating-linear-gradient(
+          to bottom,
+          rgba(255,255,255,.03),
+          rgba(255,255,255,.03) 1px,
+          rgba(0,0,0,0) 3px,
+          rgba(0,0,0,0) 6px
+        );
+      opacity:.08;
+    }
+    #flash{
+      position:absolute; inset:0;
+      pointer-events:none;
+      z-index:5;
+      background: radial-gradient(900px 520px at 50% 50%, rgba(255,255,255,1), rgba(255,255,255,0) 65%);
+      opacity:0;
+      transition: opacity .10s linear;
+      mix-blend-mode: screen;
+      filter: blur(1px);
+    }
+
+    /* HUD */
+    #hud{
+      position:absolute;
+      left:50%; top:50%;
+      transform:translate(-50%,-50%);
+      text-align:center;
+      color:var(--hud);
+      pointer-events:none;
+      z-index:3;
+      transition: opacity .35s ease, transform .35s ease;
+      padding: 14px 18px;
+    }
+    .title{
+      font-weight:900;
+      letter-spacing:.24em;
+      text-transform:uppercase;
+      font-size:20px;
+      text-shadow: var(--shadow);
+      opacity:.96;
+      white-space:nowrap;
+    }
+    .subtitle{
+      margin-top:10px;
+      color:var(--hud-dim);
+      letter-spacing:.16em;
+      font-size:13px;
+      text-shadow: var(--shadow);
+      white-space:nowrap;
+    }
+    .row{
+      display:flex;
+      justify-content:center;
+      align-items:flex-end;
+      gap:22px;
+      margin-top:18px;
+    }
+    .block{min-width:126px; perspective: 900px;}
+    .num{
+      font-size:74px;
+      line-height:1;
+      font-weight:950;
+      letter-spacing:.06em;
+      text-shadow: var(--shadow);
+      transform-style: preserve-3d;
+      transform: translateZ(0);
+      filter: drop-shadow(0 0 18px rgba(130,200,255,.25));
+    }
+    .num.flip{
+      animation: flip .46s cubic-bezier(.2,.75,.1,1);
+    }
+    @keyframes flip{
+      0%   { transform: translateZ(0) rotateX(0deg) scale(1);   filter: drop-shadow(0 0 18px rgba(130,200,255,.25)); }
+      45%  { transform: translateZ(0) rotateX(-70deg) scale(1.04); filter: drop-shadow(0 0 30px rgba(255,255,255,.35)); }
+      100% { transform: translateZ(0) rotateX(0deg) scale(1);   filter: drop-shadow(0 0 20px rgba(130,200,255,.25)); }
+    }
+    .label{
+      margin-top:8px;
+      font-size:12px;
+      letter-spacing:.34em;
+      color:var(--hud-dim);
+      text-transform:uppercase;
+      text-shadow: var(--shadow);
+    }
+    #status{
+      margin-top:14px;
+      font-size:13px;
+      color:var(--hud-dim);
+      letter-spacing:.1em;
+      text-shadow: var(--shadow);
+    }
+    #debug{
+      margin-top:10px;
+      font-size:11px;
+      color: rgba(255,255,255,.42);
+      letter-spacing:.06em;
+      text-shadow: var(--shadow);
+    }
+
+    /* Launch overlay text */
+    #launch{
+      position:absolute;
+      left:50%; top:50%;
+      transform: translate(-50%,-50%) scale(1.15);
+      text-align:center;
+      z-index:3;
+      opacity:0;
+      pointer-events:none;
+      transition: opacity .5s ease, transform .7s cubic-bezier(.2,.9,.1,1);
+    }
+    #launch.show{
+      opacity:1;
+      transform: translate(-50%,-50%) scale(1.0);
+    }
+    .launchHead{
+      font-weight:950;
+      letter-spacing:.22em;
+      font-size:64px;
+      color: rgba(255,255,255,.97);
+      text-shadow: 0 0 25px rgba(160,220,255,.22), 0 0 95px rgba(120,190,255,.20);
+      filter: drop-shadow(0 0 28px rgba(140,210,255,.22));
+      white-space:nowrap;
+    }
+    .launchSub{
+      margin-top:12px;
+      font-weight:800;
+      letter-spacing:.16em;
+      font-size:14px;
+      color: rgba(255,255,255,.64);
+      text-shadow: 0 0 25px rgba(160,220,255,.18), 0 0 80px rgba(120,190,255,.12);
+      white-space:nowrap;
+    }
+
+    /* Controls */
+    #controls{
+      position:absolute;
+      right:16px; top:16px;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+      pointer-events:auto;
+      z-index:6;
+    }
+    button{
+      background:var(--panel);
+      border:1px solid var(--panel-brd);
+      color:var(--hud);
+      padding:10px 12px;
+      border-radius:12px;
+      cursor:pointer;
+      letter-spacing:.1em;
+      font-weight:800;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      box-shadow: 0 10px 40px rgba(0,0,0,.35);
+    }
+    button:hover{border-color: rgba(255,255,255,.28);}
+    button:active{transform: translateY(1px);}
+
+    #hint{
+      position:absolute;
+      left:16px; bottom:16px;
+      color: rgba(255,255,255,.52);
+      font-size:12px;
+      line-height:1.6;
+      letter-spacing:.08em;
+      z-index:6;
+      text-shadow: 0 0 18px rgba(0,0,0,.6);
+    }
+
+    @media (max-width: 900px){
+      .row{gap:14px}
+      .block{min-width:92px}
+      .num{font-size:52px}
+      .title{font-size:16px}
+      .launchHead{font-size:44px}
+    }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="bg"></canvas>
+    <div id="vignette"></div>
+    <div id="hud">
+      <div class="title" id="title">WEB SITE 公開まで</div>
+      <div class="subtitle" id="subtitle">COUNTDOWN TO LAUNCH</div>
+      <div class="row" aria-label="countdown">
+        <div class="block"><div class="num" id="d">00</div><div class="label">DAYS</div></div>
+        <div class="block"><div class="num" id="h">00</div><div class="label">HOURS</div></div>
+        <div class="block"><div class="num" id="m">00</div><div class="label">MIN</div></div>
+        <div class="block"><div class="num" id="s">00</div><div class="label">SEC</div></div>
+      </div>
+      <div id="status">Target: 1/2 00:00 (JST)</div>
+      <div id="debug"></div>
+    </div>
+
+    <div id="launch">
+      <div class="launchHead" id="launchHead">LAUNCHED</div>
+      <div class="launchSub" id="launchSub">WEB SITE IS NOW OPEN</div>
+    </div>
+
+    <div id="scanlines"></div>
+    <div id="flash"></div>
+
+    <div id="controls">
+      <button id="btnFullscreen">Fullscreen (F)</button>
+      <button id="btnWake">Wake Lock (W)</button>
+      <button id="btnHud">HUD (H)</button>
+      <button id="btnPerf">Performance: AUTO (P)</button>
+      <button id="btnTest">TEST LAUNCH (T)</button>
+    </div>
+
+    <div id="hint">
+      Keys: <b>F</b> Fullscreen / <b>W</b> WakeLock / <b>H</b> HUD / <b>P</b> Performance / <b>T</b> Test<br>
+      これは<strong>外部ライブラリ無し</strong>なので、OBSの「ローカルファイル」でも動きます
+    </div>
+  </div>
+
+  <script>
+    /***********************
+     * CONFIG
+     ***********************/
+    const CONFIG = {
+      // 次に来る「1/2 00:00（JST）」へカウント
+      TARGET_RULE: { month: 1, day: 2, hour: 0, minute: 0, tzOffsetMinutes: 9*60 }, // JST固定
+
+      TITLE: 'WEB SITE 公開まで',
+      SUBTITLE: 'COUNTDOWN TO LAUNCH',
+      STATUS_PREFIX: 'Target:',
+
+      LAUNCH_HEADLINE: 'LAUNCHED',
+      LAUNCH_TAGLINE: 'WEB SITE IS NOW OPEN',
+
+      // 演出
+      INTENSIFY_WINDOW_MIN: 12,     // 最後の何分で強くするか
+      FINAL_10S_BOOST: 1.0,         // 残り10秒の強化係数
+
+      // 星の数（Performanceモードで上書き）
+      STAR_COUNT_AUTO: 3200,
+      STAR_COUNT_LOW: 1700,
+      STAR_COUNT_HIGH: 5200,
+
+      // ワープ速度（ベース）
+      SPEED_BASE: 0.36, // starZの減衰速度（大きいほど速い）
+      SPEED_MAX_BOOST: 2.2, // 近づくほどの上乗せ
+
+      // 爆発
+      BURST_PARTICLES: 1600,
+      BURST_DURATION: 2.2, // sec
+    };
+
+    /***********************
+     * DOM
+     ***********************/
+    const $ = (id) => document.getElementById(id);
+    $('title').textContent = CONFIG.TITLE;
+    $('subtitle').textContent = CONFIG.SUBTITLE;
+    $('launchHead').textContent = CONFIG.LAUNCH_HEADLINE;
+    $('launchSub').textContent = CONFIG.LAUNCH_TAGLINE;
+
+    const stage = $('stage');
+    const canvas = $('bg');
+    const ctx = canvas.getContext('2d', { alpha:true, desynchronized:true });
+
+    const vignetteEl = $('vignette');
+    const flashEl = $('flash');
+    const hudEl = $('hud');
+    const launchEl = $('launch');
+
+    const dEl = $('d'), hEl = $('h'), mEl = $('m'), sEl = $('s');
+    const statusEl = $('status');
+    const debugEl = $('debug');
+
+    const pad2 = (n) => String(n).padStart(2, '0');
+    const clamp01 = (x) => Math.max(0, Math.min(1, x));
+    const smoothstep = (a,b,x) => {
+      const t = clamp01((x-a)/(b-a));
+      return t*t*(3-2*t);
+    };
+
+    /***********************
+     * TIME (JST fixed)
+     ***********************/
+    function makeTargetDateNextOccurrence(rule){
+      const now = new Date();
+      const nowUtcMs = now.getTime();
+      const nowJstMs = nowUtcMs + (rule.tzOffsetMinutes * 60_000);
+      const nowJst = new Date(nowJstMs);
+
+      let year = nowJst.getUTCFullYear();
+      const targetThisYearUtcMs =
+        Date.UTC(year, rule.month-1, rule.day, rule.hour, rule.minute) - (rule.tzOffsetMinutes * 60_000);
+
+      if (nowUtcMs >= targetThisYearUtcMs) year += 1;
+
+      const targetUtcMs =
+        Date.UTC(year, rule.month-1, rule.day, rule.hour, rule.minute) - (rule.tzOffsetMinutes * 60_000);
+
+      return new Date(targetUtcMs);
+    }
+
+    const TARGET = makeTargetDateNextOccurrence(CONFIG.TARGET_RULE);
+
+    function formatTargetForStatus(date){
+      const jstMs = date.getTime() + (CONFIG.TARGET_RULE.tzOffsetMinutes * 60_000);
+      const jst = new Date(jstMs);
+      const yy = jst.getUTCFullYear();
+      const mm = pad2(jst.getUTCMonth()+1);
+      const dd = pad2(jst.getUTCDate());
+      const hh = pad2(jst.getUTCHours());
+      const mi = pad2(jst.getUTCMinutes());
+      return `${CONFIG.STATUS_PREFIX} ${yy}/${mm}/${dd} ${hh}:${mi} (JST)`;
+    }
+    statusEl.textContent = formatTargetForStatus(TARGET);
+
+    function getRemainingParts(){
+      const now = Date.now();
+      let diff = TARGET.getTime() - now;
+      if (diff < 0) diff = 0;
+
+      const totalSec = Math.floor(diff / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hours = Math.floor((totalSec % 86400) / 3600);
+      const minutes = Math.floor((totalSec % 3600) / 60);
+      const seconds = totalSec % 60;
+
+      return { diff, days, hours, minutes, seconds, done: diff === 0 };
+    }
+
+    /***********************
+     * Performance mode
+     ***********************/
+    let perfMode = 'AUTO'; // AUTO | LOW | HIGH
+    function starCountForMode(){
+      if (perfMode === 'LOW') return CONFIG.STAR_COUNT_LOW;
+      if (perfMode === 'HIGH') return CONFIG.STAR_COUNT_HIGH;
+      return CONFIG.STAR_COUNT_AUTO;
+    }
+    function dprCapForMode(){
+      const dpr = window.devicePixelRatio || 1;
+      if (perfMode === 'LOW') return Math.min(dpr, 1.0);
+      if (perfMode === 'HIGH') return Math.min(dpr, 2.0);
+      return Math.min(dpr, 1.5);
+    }
+    function resScaleForMode(){
+      if (perfMode === 'LOW') return 0.88;
+      return 1.0;
+    }
+    function setPerfButton(){
+      $('btnPerf').textContent = `Performance: ${perfMode} (P)`;
+    }
+    setPerfButton();
+
+    /***********************
+     * Canvas resize
+     ***********************/
+    let W=0,H=0,scaleX=1,scaleY=1;
+    function resize(){
+      W = window.innerWidth; H = window.innerHeight;
+      const dpr = dprCapForMode();
+      const rs = resScaleForMode();
+
+      const cw = Math.max(2, Math.floor(W * dpr * rs));
+      const ch = Math.max(2, Math.floor(H * dpr * rs));
+      canvas.width = cw;
+      canvas.height = ch;
+
+      // Map CSS pixels -> canvas pixels
+      scaleX = cw / W;
+      scaleY = ch / H;
+      ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+
+      buildNebula();
+    }
+    window.addEventListener('resize', resize);
+
+    /***********************
+     * Nebula (offscreen)
+     ***********************/
+    let nebula = null;
+    function buildNebula(){
+      const size = (perfMode === 'LOW') ? 384 : 512;
+      nebula = document.createElement('canvas');
+      nebula.width = size;
+      nebula.height = size;
+      const nctx = nebula.getContext('2d', { alpha:true });
+      nctx.clearRect(0,0,size,size);
+
+      // base dark
+      const bg = nctx.createRadialGradient(size*0.5, size*0.5, 0, size*0.5, size*0.5, size*0.62);
+      bg.addColorStop(0, 'rgba(10,14,28,1)');
+      bg.addColorStop(1, 'rgba(0,0,0,1)');
+      nctx.fillStyle = bg;
+      nctx.fillRect(0,0,size,size);
+
+      // colored clouds
+      nctx.globalCompositeOperation = 'lighter';
+      nctx.filter = 'blur(24px)';
+      const blobs = (perfMode === 'LOW') ? 22 : 34;
+      for (let i=0;i<blobs;i++){
+        const x = Math.random()*size;
+        const y = Math.random()*size;
+        const r = size*(0.12 + Math.random()*0.22);
+        const g = nctx.createRadialGradient(x,y, 0, x,y, r);
+        const pick = Math.random();
+        const col = (pick < 0.33) ? 'rgba(120,190,255,' : (pick < 0.66) ? 'rgba(200,120,255,' : 'rgba(120,255,220,';
+        g.addColorStop(0.0, col + (0.16 + Math.random()*0.18) + ')');
+        g.addColorStop(1.0, 'rgba(0,0,0,0)');
+        nctx.fillStyle = g;
+        nctx.beginPath();
+        nctx.arc(x,y,r,0,Math.PI*2);
+        nctx.fill();
+      }
+      nctx.filter = 'none';
+      nctx.globalCompositeOperation = 'source-over';
+    }
+
+    /***********************
+     * Starfield (typed arrays)
+     ***********************/
+    let N = 0;
+    let sx, sy, sz, spx, spy, sseed;
+    function initStars(){
+      N = starCountForMode();
+      sx = new Float32Array(N);
+      sy = new Float32Array(N);
+      sz = new Float32Array(N);
+      spx = new Float32Array(N);
+      spy = new Float32Array(N);
+      sseed = new Float32Array(N);
+
+      for (let i=0;i<N;i++){
+        resetStar(i, true);
+        sseed[i] = Math.random();
+      }
+    }
+
+    function resetStar(i, init=false){
+      // center-biased distribution
+      const a = Math.random()*Math.PI*2;
+      const r = Math.pow(Math.random(), 0.55); // more near center
+      const x = Math.cos(a)*r;
+      const y = Math.sin(a)*r*0.62;
+
+      sx[i] = x;
+      sy[i] = y;
+      sz[i] = init ? Math.random() : 1.0;
+
+      // set previous projection as current to avoid streak pop
+      const pr = project(x, y, Math.max(0.02, sz[i]));
+      spx[i] = pr.x;
+      spy[i] = pr.y;
+    }
+
+    function project(x, y, z){
+      // pseudo perspective projection
+      const s = Math.min(W, H) * 0.72;
+      const inv = 1.0 / z;
+      return {
+        x: W*0.5 + x*inv*s,
+        y: H*0.5 + y*inv*s
+      };
+    }
+
+    /***********************
+     * Particles (burst)
+     ***********************/
+    let burstActive = false;
+    let burstT0 = 0;
+    const P = CONFIG.BURST_PARTICLES;
+    const px = new Float32Array(P);
+    const py = new Float32Array(P);
+    const pvx = new Float32Array(P);
+    const pvy = new Float32Array(P);
+    const plife = new Float32Array(P);
+    function startBurst(){
+      burstActive = true;
+      burstT0 = performance.now()/1000;
+      for (let i=0;i<P;i++){
+        px[i] = W*0.5;
+        py[i] = H*0.5;
+        const a = Math.random()*Math.PI*2;
+        const u = (Math.random()*2-1);
+        const s = Math.sqrt(1-u*u);
+        // 2D projection of 3D-ish direction
+        const dx = Math.cos(a)*s;
+        const dy = u;
+        const sp = 220 + Math.random()*920;
+        pvx[i] = dx*sp;
+        pvy[i] = dy*sp;
+        plife[i] = 0.0;
+      }
+    }
+    function updateBurst(dt){
+      if (!burstActive) return;
+      const now = performance.now()/1000;
+      const t = now - burstT0;
+      const life = clamp01(t / CONFIG.BURST_DURATION);
+
+      const drag = 0.985;
+      for (let i=0;i<P;i++){
+        plife[i] = life;
+        pvx[i] *= drag;
+        pvy[i] *= drag;
+        px[i] += pvx[i]*dt;
+        py[i] += pvy[i]*dt;
+      }
+      if (life >= 1){
+        burstActive = false;
+      }
+    }
+
+    /***********************
+     * Cinematic state
+     ***********************/
+    let state = 'countdown'; // countdown | launch | post
+    let launchedOnce = false;
+
+    // transient intensities
+    let flash = 0.0;
+    let shake = 0.0;
+    let warpKick = 0.0;
+    let bloom = 0.0;  // just affects drawing intensity
+
+    let shockActive = false;
+    let shockT0 = 0;
+
+    function kickSmall(){
+      flash = Math.max(flash, 0.20);
+      shake = Math.max(shake, 0.14);
+      warpKick = Math.max(warpKick, 0.22);
+      bloom = Math.max(bloom, 0.18);
+    }
+    function kickBig(){
+      flash = Math.max(flash, 0.44);
+      shake = Math.max(shake, 0.32);
+      warpKick = Math.max(warpKick, 0.44);
+      bloom = Math.max(bloom, 0.40);
+    }
+    function kickFinal(){
+      flash = Math.max(flash, 0.68);
+      shake = Math.max(shake, 0.55);
+      warpKick = Math.max(warpKick, 0.85);
+      bloom = Math.max(bloom, 0.65);
+    }
+
+    function flashNow(op=0.85){
+      flashEl.style.transition = 'opacity .08s linear';
+      flashEl.style.opacity = String(op);
+      setTimeout(()=>{
+        flashEl.style.transition = 'opacity .22s linear';
+        flashEl.style.opacity = '0';
+      }, 80);
+    }
+
+    function beginLaunch(){
+      state = 'launch';
+      const now = performance.now()/1000;
+      shockActive = true;
+      shockT0 = now;
+
+      flashNow(0.92);
+      kickFinal();
+
+      // hide HUD with a tiny motion
+      hudEl.style.opacity = '0';
+      hudEl.style.transform = 'translate(-50%,-52%)';
+
+      // show launch text slightly later
+      setTimeout(()=> launchEl.classList.add('show'), 520);
+
+      // burst
+      setTimeout(()=> startBurst(), 240);
+    }
+
+    function forceTestLaunch(){
+      if (state === 'launch' || state === 'post') return;
+      launchedOnce = true;
+      beginLaunch();
+    }
+
+    /***********************
+     * Countdown update (robust even offline)
+     ***********************/
+    let lastSecond = null;
+    function updateDigits(parts){
+      const vals = {
+        d: String(parts.days).padStart(2,'0'),
+        h: pad2(parts.hours),
+        m: pad2(parts.minutes),
+        s: pad2(parts.seconds),
+      };
+
+      for (const id of ['d','h','m','s']){
+        const el = $(id);
+        if (el.textContent !== vals[id]){
+          el.textContent = vals[id];
+          el.classList.remove('flip');
+          // reflow to restart animation
+          void el.offsetWidth;
+          el.classList.add('flip');
+        }
+      }
+
+      // subtitle
+      $('subtitle').textContent = parts.done ? 'LAUNCHED' : CONFIG.SUBTITLE;
+
+      // debug line: show current JST time and remaining ms (useful when someone says "0のまま")
+      const now = Date.now();
+      const nowJst = new Date(now + CONFIG.TARGET_RULE.tzOffsetMinutes*60_000);
+      const yy = nowJst.getUTCFullYear();
+      const mm = pad2(nowJst.getUTCMonth()+1);
+      const dd = pad2(nowJst.getUTCDate());
+      const hh = pad2(nowJst.getUTCHours());
+      const mi = pad2(nowJst.getUTCMinutes());
+      const ss = pad2(nowJst.getUTCSeconds());
+      debugEl.textContent = `Now(JST): ${yy}/${mm}/${dd} ${hh}:${mi}:${ss}  |  Remaining(ms): ${parts.diff}`;
+    }
+
+    function tick(){
+      const p = getRemainingParts();
+
+      if (p.seconds !== lastSecond){
+        lastSecond = p.seconds;
+        updateDigits(p);
+
+        // cinematic triggers
+        if (!p.done){
+          if (p.seconds % 10 === 0) kickSmall();
+          if (p.seconds === 0) kickBig();
+
+          if (p.diff <= 30_000) kickBig();
+          if (p.diff <= 10_000) kickFinal();
+        }
+      }
+
+      if (p.done && !launchedOnce){
+        launchedOnce = true;
+        beginLaunch();
+      }
+    }
+    setInterval(tick, 120);
+    tick();
+
+    /***********************
+     * Draw loop (canvas)
+     ***********************/
+    let t0 = performance.now();
+    let prev = t0;
+
+    function drawNebula(t){
+      if (!nebula) return;
+      const drift = Math.sin(t*0.06)*0.5 + Math.cos(t*0.04)*0.5;
+      const s = 1.05 + 0.06*Math.sin(t*0.08);
+      const x = -W*0.05 + drift*14;
+      const y = -H*0.08 + drift*10;
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 0.28 + bloom*0.15;
+      ctx.drawImage(nebula, x, y, W*s, H*s);
+      ctx.restore();
+    }
+
+    function drawStars(dt, warp, jitter){
+      // background clear with slight trail for motion blur
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(0,0,W,H);
+      ctx.restore();
+
+      // draw nebula under
+      drawNebula((performance.now()-t0)/1000);
+
+      // stars
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+
+      const w2 = W*0.5, h2 = H*0.5;
+      const baseAlpha = 0.62 + bloom*0.45;
+      const lineBoost = 1.0 + warp*1.2;
+
+      for (let i=0;i<N;i++){
+        // update depth
+        sz[i] -= (CONFIG.SPEED_BASE * (1.0 + warp*CONFIG.SPEED_MAX_BOOST)) * dt;
+        if (sz[i] <= 0.02){
+          resetStar(i, false);
+          continue;
+        }
+
+        const z = Math.max(0.02, sz[i]);
+        const pr = project(sx[i], sy[i], z);
+        const x = pr.x, y = pr.y;
+
+        // out of bounds -> respawn (keeps center tight)
+        if (x < -W*0.25 || x > W*1.25 || y < -H*0.25 || y > H*1.25){
+          resetStar(i, false);
+          continue;
+        }
+
+        const dx = x - spx[i];
+        const dy = y - spy[i];
+
+        const seed = sseed[i];
+        // color variant
+        let r=210,g=235,b=255;
+        if (seed < 0.33){ r=200; g=220; b=255; }
+        else if (seed < 0.66){ r=255; g=220; b=205; }
+        else { r=205; g=255; b=240; }
+
+        // brightness by depth
+        const depth = 1.0 - z;           // closer -> brighter
+        const a = (0.10 + depth*0.90) * baseAlpha;
+        const lw = (0.5 + depth*2.1) * lineBoost * (1.0 + jitter*0.35);
+
+        // streak: draw a line along motion
+        ctx.strokeStyle = `rgba(${r},${g},${b},${a})`;
+        ctx.lineWidth = lw;
+        ctx.beginPath();
+        ctx.moveTo(spx[i], spy[i]);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        // core dot
+        ctx.fillStyle = `rgba(255,255,255,${a*0.85})`;
+        ctx.beginPath();
+        ctx.arc(x, y, Math.max(0.7, lw*0.55), 0, Math.PI*2);
+        ctx.fill();
+
+        spx[i] = x;
+        spy[i] = y;
+      }
+
+      ctx.restore();
+    }
+
+    function drawShockwave(t){
+      if (!shockActive) return;
+      const life = clamp01((t - shockT0) / 1.45);
+      const k = smoothstep(0,1,life);
+
+      const r = Math.min(W,H) * (0.06 + k*0.78);
+      const a = (1.0 - k) * 0.78;
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineWidth = 2 + k*6;
+      const grad = ctx.createRadialGradient(W*0.5, H*0.5, r*0.2, W*0.5, H*0.5, r);
+      grad.addColorStop(0, `rgba(255,255,255,${a*0.0})`);
+      grad.addColorStop(0.6, `rgba(200,235,255,${a*0.55})`);
+      grad.addColorStop(1, `rgba(255,255,255,${a*0.0})`);
+      ctx.strokeStyle = grad;
+      ctx.beginPath();
+      ctx.arc(W*0.5, H*0.5, r, 0, Math.PI*2);
+      ctx.stroke();
+      ctx.restore();
+
+      if (life >= 1){
+        shockActive = false;
+      }
+    }
+
+    function drawBurst(){
+      if (!burstActive) return;
+      // draw particles
+      const now = performance.now()/1000;
+      const life = clamp01((now - burstT0) / CONFIG.BURST_DURATION);
+      const a = (1.0 - life);
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i=0;i<P;i++){
+        const x = px[i], y = py[i];
+        const s = 1.0 + (1.0-life)*3.8;
+        const alpha = a*(0.45 + (i%7)*0.03);
+
+        ctx.fillStyle = `rgba(230,245,255,${alpha})`;
+        ctx.beginPath();
+        ctx.arc(x,y, s, 0, Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function animate(){
+      const now = performance.now();
+      const dt = Math.min(0.05, (now - prev)/1000);
+      prev = now;
+      const t = now/1000;
+
+      // decay
+      flash = Math.max(0, flash - dt*1.9);
+      shake = Math.max(0, shake - dt*1.35);
+      warpKick = Math.max(0, warpKick - dt*1.2);
+      bloom = Math.max(0, bloom - dt*1.1);
+
+      // proximity intensity (last N minutes)
+      const p = getRemainingParts();
+      const win = CONFIG.INTENSIFY_WINDOW_MIN * 60_000;
+      const prox = (p.diff <= win) ? (1.0 - p.diff / win) : 0.0;
+      const proxPow = clamp01(prox*prox);
+
+      // warp base by proximity
+      let warp = 0.10 + proxPow*1.55 + warpKick*1.15;
+      if (p.diff <= 10_000 && !p.done) warp += CONFIG.FINAL_10S_BOOST * (1.0 - p.diff/10_000) * 0.95;
+
+      if (state === 'launch'){
+        // accelerate hard for ~1 sec after launch start
+        const s = smoothstep(shockT0, shockT0+0.9, t);
+        warp += 1.9 * s;
+        bloom = Math.max(bloom, 0.55*s);
+        flash = Math.max(flash, 0.25*s);
+        shake = Math.max(shake, 0.35*s);
+      }
+      if (state === 'post'){
+        warp = 0.32;
+      }
+      if (perfMode === 'LOW') warp *= 0.88;
+
+      // shake transform (whole stage)
+      const jit = clamp01(shake + flash*0.25);
+      const sxh = (Math.sin(t*29.0)+Math.sin(t*47.0)*0.6) * jit * 6.0;
+      const syh = (Math.cos(t*31.0)+Math.cos(t*41.0)*0.6) * jit * 5.0;
+      const rot = (Math.sin(t*18.0) * jit * 0.25);
+      stage.style.transform = `translate3d(${sxh}px,${syh}px,0) rotate(${rot}deg)`;
+
+      // flash overlay
+      const cssFlash = clamp01(flash*0.65 + (state==='launch' ? 0.18 : 0.0));
+      flashEl.style.opacity = String(cssFlash);
+
+      // vignette breath
+      vignetteEl.style.opacity = String(Math.min(1.0, 0.90 + prox*0.10 + bloom*0.08));
+
+      // star render
+      drawStars(dt, warp, jit);
+
+      // shockwave + burst on top
+      drawShockwave(t);
+      updateBurst(dt);
+      drawBurst();
+
+      requestAnimationFrame(animate);
+    }
+
+    /***********************
+     * Controls
+     ***********************/
+    async function toggleFullscreen(){
+      try{
+        if (!document.fullscreenElement){
+          await document.documentElement.requestFullscreen?.();
+        } else {
+          await document.exitFullscreen?.();
+        }
+      }catch(e){
+        // In OBS browser source, fullscreen may be unsupported; show hint in debug
+        debugEl.textContent = 'Fullscreen is not available in this environment (OBSなど)。';
+      }
+    }
+
+    let wakeLock = null;
+    async function toggleWakeLock(){
+      try{
+        if (wakeLock){
+          await wakeLock.release();
+          wakeLock = null;
+          $('btnWake').textContent = 'Wake Lock (W)';
+          return;
+        }
+        if ('wakeLock' in navigator){
+          wakeLock = await navigator.wakeLock.request('screen');
+          $('btnWake').textContent = 'Wake Lock: ON (W)';
+          wakeLock.addEventListener('release', ()=>{
+            wakeLock = null;
+            $('btnWake').textContent = 'Wake Lock (W)';
+          });
+        } else {
+          $('btnWake').textContent = 'WakeLock: N/A';
+        }
+      }catch(e){
+        $('btnWake').textContent = 'WakeLock: DENIED';
+      }
+    }
+
+    let hudVisible = true;
+    function toggleHud(){
+      hudVisible = !hudVisible;
+      hudEl.style.opacity = hudVisible ? '1' : '0';
+    }
+
+    function togglePerf(){
+      if (perfMode === 'AUTO') perfMode = 'LOW';
+      else if (perfMode === 'LOW') perfMode = 'HIGH';
+      else perfMode = 'AUTO';
+      setPerfButton();
+      // rebuild
+      resize();
+      initStars();
+    }
+
+    $('btnFullscreen').addEventListener('click', toggleFullscreen);
+    $('btnWake').addEventListener('click', toggleWakeLock);
+    $('btnHud').addEventListener('click', toggleHud);
+    $('btnPerf').addEventListener('click', togglePerf);
+    $('btnTest').addEventListener('click', forceTestLaunch);
+
+    window.addEventListener('keydown', (e)=>{
+      const k = e.key.toLowerCase();
+      if (k === 'f') toggleFullscreen();
+      if (k === 'w') toggleWakeLock();
+      if (k === 'h') toggleHud();
+      if (k === 'p') togglePerf();
+      if (k === 't') forceTestLaunch();
+    });
+
+    /***********************
+     * Launch state transition to POST
+     ***********************/
+    const postWatcher = setInterval(()=>{
+      if (state !== 'launch') return;
+      const now = performance.now()/1000;
+      if ((now - shockT0) > 3.3){
+        state = 'post';
+        // keep launch text visible, keep HUD hidden
+      }
+    }, 250);
+
+    /***********************
+     * Boot
+     ***********************/
+    resize();
+    initStars();
+
+    // fill once (avoid initial black frame)
+    ctx.setTransform(scaleX,0,0,scaleY,0,0);
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+    ctx.fillRect(0,0,W,H);
+
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>
